@@ -1,0 +1,157 @@
+---
+title: "Coursera_ML_Assignment_2015"
+author: "Ignacio de Andrés"
+date: "Saturday, July 25, 2015"
+output: pdf_document
+---
+
+Introduction:
+==============
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+Goal:
+===============
+
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set, as well as create a report describing how you built the model, how you used cross validation and why you made the choices you did. 
+
+You will also use your prediction model to predict 20 different test cases.
+
+For this purpose, and given the amount of variables and the kind of solution we llok for (classification), we'll try both decision trees and random forest algorithm to try to find the most suitable solutions. This will require to load the following packages:
+
+```{r}
+library(caret)
+library(randomForest)
+library(rattle)
+library(RColorBrewer)
+library(rpart)
+library(rpart.plot)
+```
+
+
+Data Collection:
+===============
+
+First of all we collect both the training data and the test data from their original sources (during our first attempt, we detected missing values in the form of NA, #DIV/0! and empty spaces, so we assume them all as NAs while importing the data):
+
+
+```{r}
+training<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", header=TRUE, na.strings=c("NA","#DIV/0!",""))
+testing<-read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", header=TRUE, na.strings=c("NA","#DIV/0!",""))
+
+```
+
+
+Data Partition
+=================
+
+Then we devide the initial training set into a training set and a test set to evaluate our algorithms, using the createDataPartition function from the caret package: (CAUTION:set.seed must be used in advance to make the results reproducible)
+
+```{r}
+set.seed(151081)
+subsetTrain<-createDataPartition(training$classe, p=0.7, list=FALSE)
+train1<-training[subsetTrain,]
+test1<-training[-subsetTrain,]
+```
+
+
+Data Preparation and Cleaning
+==============================
+
+Two different processes will be conducted in this section: 
+A) delete those columns where at least 50% of values are NAs
+B) delete those variables with low variability <- low predictive power
+
+```{r}
+table(colSums(is.na(train1)/nrow(train1)))
+#there are only variables with no NAs and variables where most values are NAs;therefore, the threshold is (% of NA ==0)
+train1<-train1[,colSums(is.na(train1)/nrow(train1))==0]
+
+nsv <- nearZeroVar(train1, saveMetrics=TRUE)
+summary(nsv)
+#There are 34 variables with "near zero variance" as detected by this function, so they will be removed
+nsv_col<-rownames(nsv)[nsv$nzv==FALSE]
+train1<-train1[,colnames(train1) %in% nsv_col]
+testing<-testing[,colnames(testing) %in% nsv_col]
+```
+
+Finally, we review the current set of variables, and decide to delete the first six as they apparently shouldn't be helpful to predict the performance in the exercise: X,user_name, raw_timetsamp_part_1, raw_timetsamp_part_2, cvtd_timestamp and num_window
+
+```{r}
+train1<-train1[,7:59]
+```
+
+After all the preparation, we end up with 47 variables, and we can start conducting the training with 2 different models: decision trees and random forest.
+
+Model Training: Decision Trees
+==============================
+
+We will use the decision trees method as it is not parametric (so it doesn't imply requirements of data distributions), is able to properly manage multicollinearity and work well with non-linear relationships between the dependent variable and the predictors.
+
+Because the data range for the different variables differ in more than 100 times in some cases, we will include some preproccesing to account for it.
+
+```{r}
+DTmodel<-train(classe ~ ., method="rpart", preProcess=c("center","scale"),data=train1)
+print(DTmodel)
+#run the model on the test set to check the our of sample error
+predDT <- predict(DTmodel, newdata=test1)
+print(confusionMatrix(predDT, test1$classe))
+
+```
+
+The results are quite poor, less than 50% accuracy. Let's give it a 2nd chance by preProcessing and introducing cross-validation.
+
+```{r}
+DTmodel2<-train(classe ~ ., method="rpart", preProcess=c("center","scale"), trControl=trainControl(method = "cv"), data=train1)
+print(DTmodel2)
+fancyRpartPlot(modFitA1)
+#run the model on the test set to check the our of sample error
+predDT2 <- predict(DTmodel2, newdata=test1)
+print(confusionMatrix(predDT2, test1$classe))
+```
+
+No significant change, so we move the our second option: Random Forest.
+
+Model Training: Random Forest
+=============================
+
+Random Forest usually provides more robust predictions. Let see if it's the case today.
+
+```{r}
+RFmodel<-train(classe ~ ., ntree=300, method="rf", trControl=trainControl(method="cv"), data=train1)
+predRF <- predict(RFmodel, newdata=test1)
+print(confusionMatrix(predRF, test1$classe))
+
+#The out-of-sample error, in this case, is 1 - Accuracy = 0.0095;we can calculate it more precisely this way:
+SE <- 1 - as.numeric(confusionMatrix(test1$classe, predRF)$overall[1])
+SE
+```
+
+The results on the test set created with this new model are much more promising, showing an accuracy rate of 0.9905, and a out-of-sample error a bit lower than 1%. Based on this results, we stick to this model to test it on the initially defined testing set.
+
+
+Final PRediction
+================
+
+Finally, we apply our Random Forest model to the dataset initially provided as test sample, and colect the results.
+
+```{r}
+result <- predict(RFmodel, testing)
+result
+```
+
+Conclusion
+===============
+
+Random Forest is the most appropiate technique in this case to determine whether the exercise was performed correctly on not, based on the data colllected. The accuracy of that prediction is really high (99%) in the "intermediate" testing set, so it should do a good work on the final one. 
+
+Given these results, the expected out-of-sample error should be lower than 1%, as the less accurate prediction ("C", with a 0.961 accuracy) appears only once, while the other 19 predictions showed an accuracy higher than 0.992.
+
+A=1674/1678 (0.99762)
+B=1127/1135 (0.99295)
+C=1018/1059 (0.96128)
+D=968/968   (1.00000)
+E=1082/1085 (0.99723)
+
+Decision Trees, on the other hand, didn't performed well, maybe due to its lack of stability or an overfitting issue.
+
